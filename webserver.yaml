@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create Webserver with EBS and EC2 instance Containing webserver.
+Parameters:
+  ParaKeyName:
+    Description: the keypair for loging into configured Webserver.
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 Keypair.
+  ParaInstanceType:
+    Description: WebServer Ec2 instance type.
+    Type: String 
+    Default: 't2.micro'
+    AllowedValues:
+      - t1.micro
+      - t2.nano
+      - t2.small
+      - t2.micro 
+      - t2.medium
+      - t2.large
+    ConstraintDescription: must be valid InstanceType.
+  SSHLocation:
+    Description: allowed range of ip addresses to accessing the webserver.
+    Type: String 
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be valid SSHlocation.
+  
+Mappings:
+  AWSInstanceType2Arch:
+    t1.micro:
+      Arch: HVM64
+    t2.nano:
+      Arch: HVM64
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+    t2.large:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    eu-west-1:
+      HVM64: ami-01720b5f421cf0179
+      HVMG2: ami-066ee5fd4a9ef77f1
+Resources:
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties: 
+      GroupDescription: Enable HTTP via port 80 + SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80' 
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22' 
+          ToPort: '22'
+          CidrIp: !Ref SSHLocation
+  WebServer:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+      AvailabilityZone: 'eu-west-1b'
+      ImageId: !FindInMap
+                - AWSRegionArch2AMI
+                - !Ref 'AWS::Region'
+                - !FindInMap 
+                  - AWSInstanceType2Arch
+                  - !Ref ParaInstanceType
+                  - Arch
+      InstanceType: !Ref ParaInstanceType 
+      KeyName: !Ref ParaKeyName 
+      SecurityGroups: 
+        - !Ref WebServerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash 
+          yum install httpd php git -y
+          systemctl restart httpd
+          systemctl enable httpd
+          mkfs.ext4 /dev/sds
+          mount /dev/sds /var/www/html
+          rm -rf /var/www/html/*
+          git clone https://github.com/sd217/aws_terraform.git /var/www/html/
+          
+  NewVolume:
+    Type: AWS::EC2::Volume
+    Properties: 
+      AvailabilityZone: !GetAtt WebServer.AvailabilityZone
+      Size: 10
+      Encrypted: false
+      VolumeType: gp2
+  
+  VolumeAttach:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref WebServer
+      VolumeId: !Ref NewVolume
+      Device: /dev/sds
+
+   
+Outputs:
+  WebServerPublicIp:
+    Description: public ip of WebServer
+    Value: !GetAtt WebServer.PublicIp
+  InstanceID:
+    Description: The Instance ID
+    Value: !Ref WebServer
